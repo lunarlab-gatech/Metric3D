@@ -13,4 +13,5 @@ tensorboardX
 imgaug
 iopath
 imagecorruptions
-mmcv
+--find-links https://download.openmmlab.com/mmcv/dist/cu118/torch2.0/index.html
+mmcv == 2.2.0
