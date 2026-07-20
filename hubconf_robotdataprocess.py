@@ -385,8 +385,7 @@ def compare_lidar_to_pred_depth(pred_depth: np.ndarray, lidar_points: np.ndarray
 
   return error_vis, abs_err[in_stats_range], abs_err
 
-
-def main(enable_debug_vis: bool = False):
+def main_graco(enable_debug_vis: bool = False):
   """
   Args:
     enable_debug_vis (bool): whether to save the four debugging
@@ -395,7 +394,7 @@ def main(enable_debug_vis: bool = False):
   """
 
   # Set configuration for with robot to use
-  robot_name: str = "ground-01"
+  robot_name: str = "aerial-08"
   category: str = robot_name.split('-')[0] # "ground" or "aerial"
 
   # Load image data from the GrAco dataset
@@ -418,9 +417,7 @@ def main(enable_debug_vis: bool = False):
   # Load LiDAR data for evaluation
   lidar_data = LiDARData.from_ros2_bag(ros2_bag_path, '/velodyne/points', CoordinateFrame.ENU)
 
-  # TODO: pose of the LiDAR frame with respect to the camera optical frame,
-  # as a 4x4 homogeneous transform. Fill in before enabling the LiDAR
-  # depth comparison below.
+  # Pose of the LiDAR frame with respect to the camera optical frame,
   T_cam_lidar: np.ndarray = TransformationData.from_GrAco_yaml(str(calibration_dir / "stereo-lidar.yaml"), "T_cam0_Lidar").as_matrix()
 
   # Load the model once, reused for every frame below
@@ -515,6 +512,70 @@ def main(enable_debug_vis: bool = False):
         fig.savefig(str(error_hist_dir / f"{stem}_error_hist_all.png"), bbox_inches='tight', dpi=150)
         plt.close(fig)
 
+def main_airmuseum(enable_debug_vis: bool = True):
+  # Set configuration for with robot to use
+  robot_name: str = "drone"
+  scenario: str = "Scenario5"
+
+  # Load image data from the GrAco dataset
+  dataset_root: Path = Path("/") / 'home' / getpass.getuser() / 'data' / 'AirMuseum_dataset' / scenario
+  data_dir: Path = dataset_root / 'data'
+  bag_dir: Path = data_dir / robot_name
+  calibration_dir: Path = dataset_root.parent / 'sensors'
+  bag_path: Path = bag_dir / 'cam100_imu.bag'
+  input_images = ImageDataOnDisk.from_ros1_bag(bag_path, f'/{robot_name}/cam100/image_raw')
+  assert input_images.encoding == ImageDataOnDisk.ImageEncoding.Mono8
+
+  # Undistort the images
+  camera_info = CameraData.from_kalibr_mono(calibration_dir / f'{robot_name}_cameras_calib.yaml', 'cam0')
+  image_before_undistort = input_images.images[0].copy()
+  input_images.undistort_imagery_mono(camera_info)
+
+  # Set intrinsics after undistortion
+  intrinsics = np.array([camera_info.K[0,0], camera_info.K[1,1], camera_info.K[0,2], camera_info.K[1,2]])
+
+  # Load the model once, reused for every frame below
+  model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_small', pretrain=True)
+  model.cuda().eval()
+
+  # Make output paths
+  results_root: Path = dataset_root / 'results' / 'Metric3D' / robot_name
+  depth_dir: Path = results_root / 'depth'
+  depth_vis_dir: Path = results_root / 'depth_vis'
+  normal_vis_dir: Path = results_root / 'normal_vis'
+  depth_dir.mkdir(parents=True, exist_ok=True)
+  if enable_debug_vis:
+    depth_vis_dir.mkdir(parents=True, exist_ok=True)
+    normal_vis_dir.mkdir(parents=True, exist_ok=True)
+
+  # Run inference on every frame in the bag
+  for i, timestamp in tqdm.tqdm(enumerate(input_images.timestamps), total=len(input_images.timestamps), desc="Running Metric3D inference", unit=" images"):
+    image = input_images.images[i]
+    if input_images.encoding == ImageDataOnDisk.ImageEncoding.Mono8:
+      image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB) # replicate the single channel into R, G, B
+
+    pred_depth, depth_vis, normal_vis = infer_single_image(image, intrinsics, model)
+
+    # Filenames encode the timestamp, matching robotdataprocess's own convention
+    # (see ImageData.to_image_files) so from_npy_files can load these back in.
+    stem = f"{timestamp:.9f}"
+    np.save(str(depth_dir / f"{stem}.npy"), pred_depth)
+
+    if enable_debug_vis:
+      cv2.imwrite(str(depth_vis_dir / f"{stem}_rgb.png"), depth_vis)
+      if normal_vis is not None:
+        cv2.imwrite(str(normal_vis_dir / f"{stem}_normal.png"), normal_vis)
+
+def main():
+  # TODO: Undistort images before passing to Metric3D as this might be a source of error. Test this with graco since we have a pseudo-GT from the LiDAR.
+
+  dataset: str = "airmuseum"
+  if dataset == "graco":
+    main_graco()
+  elif dataset == "airmuseum":
+    main_airmuseum()
+  else:
+    raise NotImplementedError()
 
 if __name__ == '__main__':
   main()
