@@ -512,9 +512,9 @@ def main_graco(enable_debug_vis: bool = False):
         fig.savefig(str(error_hist_dir / f"{stem}_error_hist_all.png"), bbox_inches='tight', dpi=150)
         plt.close(fig)
 
-def main_airmuseum(enable_debug_vis: bool = True):
+def main_airmuseum(enable_debug_vis: bool = False):
   # Set configuration for with robot to use
-  robot_name: str = "drone"
+  robot_name: str = "robotC"
   scenario: str = "Scenario5"
 
   # Load image data from the GrAco dataset
@@ -528,7 +528,6 @@ def main_airmuseum(enable_debug_vis: bool = True):
 
   # Undistort the images
   camera_info = CameraData.from_kalibr_mono(calibration_dir / f'{robot_name}_cameras_calib.yaml', 'cam0')
-  image_before_undistort = input_images.images[0].copy()
   input_images.undistort_imagery_mono(camera_info)
 
   # Set intrinsics after undistortion
